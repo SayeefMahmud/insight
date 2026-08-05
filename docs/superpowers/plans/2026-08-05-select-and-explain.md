@@ -166,7 +166,7 @@ void main() {
     repository = SettingsRepository(secureStorage: secureStorage);
   });
 
-  test('load returns defaults when nothing has been saved', async () async {
+  test('load returns defaults when nothing has been saved', () async {
     final settings = await repository.load();
 
     expect(settings.accountId, '');
@@ -177,7 +177,7 @@ void main() {
     expect(settings.launchAtLogin, isFalse);
   });
 
-  test('save persists values that load then returns', async () async {
+  test('save persists values that load then returns', () async {
     const settings = AppSettings(
       accountId: 'acct-1',
       apiToken: 'secret-token',
@@ -428,7 +428,7 @@ void main() {
     );
   });
 
-  test('returns newly copied text and restores the original clipboard', async () async {
+  test('returns newly copied text and restores the original clipboard', () async {
     var readCallCount = 0;
     when(() => clipboard.readText()).thenAnswer((_) async {
       readCallCount++;
@@ -442,7 +442,7 @@ void main() {
     verify(() => clipboard.writeText('old clipboard value')).called(1);
   });
 
-  test('returns null when the clipboard is unchanged (nothing selected)', async () async {
+  test('returns null when the clipboard is unchanged (nothing selected)', () async {
     when(() => clipboard.readText()).thenAnswer((_) async => 'same value');
 
     final result = await service.captureSelection();
@@ -451,7 +451,7 @@ void main() {
     verify(() => clipboard.writeText('same value')).called(1);
   });
 
-  test('returns null when the captured text is empty', async () async {
+  test('returns null when the captured text is empty', () async {
     var readCallCount = 0;
     when(() => clipboard.readText()).thenAnswer((_) async {
       readCallCount++;
@@ -582,7 +582,7 @@ import 'package:http/testing.dart';
 import 'package:insight/services/workers_ai_client.dart';
 
 void main() {
-  test('streams decoded text chunks from an SSE payload', async () async {
+  test('streams decoded text chunks from an SSE payload', () async {
     final sseBody = 'data: {"response":"Hello"}\n\n'
         'data: {"response":" world"}\n\n'
         'data: [DONE]\n\n';
@@ -605,7 +605,7 @@ void main() {
     expect(chunks.join(), 'Hello world');
   });
 
-  test('throws WorkersAiException on a non-200 response', async () async {
+  test('throws WorkersAiException on a non-200 response', () async {
     final client = MockClient((request) async => http.Response('bad token', 401));
     final aiClient = WorkersAiClient(httpClient: client);
 
@@ -723,7 +723,7 @@ git commit -m "feat: add streaming Cloudflare Workers AI client"
 - Produces:
   - `enum PopupStatus { loading, noSelection, streaming, error }`
   - `class ExplanationController extends ChangeNotifier { ExplanationController({required WorkersAiClient client}); PopupStatus status; String text; String errorMessage; Future<void> start({required String? capturedText, required AppSettings settings}); }`
-  - `class PopupScreen extends StatefulWidget { const PopupScreen({required ExplanationController controller, required String? capturedText, required AppSettings settings, VoidCallback? onOpenSettings}); }`
+  - `class PopupScreen extends StatefulWidget { const PopupScreen({required ExplanationController controller, required String? capturedText, required AppSettings settings, VoidCallback? onOpenSettings, VoidCallback? onDismiss}); }` — wraps its content in a `Focus`/`KeyboardListener` that calls `onDismiss` on `LogicalKeyboardKey.escape`; `main.dart` (Task 8) supplies `onDismiss` to close the popup window.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -731,6 +731,7 @@ Create `test/ui/popup/popup_screen_test.dart`:
 
 ```dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:insight/app/settings_model.dart';
@@ -812,6 +813,26 @@ void main() {
     await tester.tap(find.text('Open Settings'));
     expect(settingsOpened, isTrue);
   });
+
+  testWidgets('pressing Esc calls onDismiss', (tester) async {
+    var dismissed = false;
+    final controller = ExplanationController(client: MockWorkersAiClient());
+
+    await tester.pumpWidget(MaterialApp(
+      home: PopupScreen(
+        controller: controller,
+        capturedText: null,
+        settings: _testSettings(),
+        onDismiss: () => dismissed = true,
+      ),
+    ));
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+
+    expect(dismissed, isTrue);
+  });
 }
 ```
 
@@ -888,6 +909,7 @@ Create `lib/ui/popup/popup_screen.dart`:
 
 ```dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/settings_model.dart';
 import 'explanation_controller.dart';
@@ -899,22 +921,32 @@ class PopupScreen extends StatefulWidget {
     required this.capturedText,
     required this.settings,
     this.onOpenSettings,
+    this.onDismiss,
   });
 
   final ExplanationController controller;
   final String? capturedText;
   final AppSettings settings;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onDismiss;
 
   @override
   State<PopupScreen> createState() => _PopupScreenState();
 }
 
 class _PopupScreenState extends State<PopupScreen> {
+  final _focusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
     widget.controller.start(capturedText: widget.capturedText, settings: widget.settings);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
   }
 
   static const _spinner = SizedBox(
@@ -923,43 +955,56 @@ class _PopupScreenState extends State<PopupScreen> {
     child: CircularProgressIndicator(strokeWidth: 2),
   );
 
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+      widget.onDismiss?.call();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final controller = widget.controller;
-        return Material(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: switch (controller.status) {
-              PopupStatus.loading => _spinner,
-              PopupStatus.noSelection => const Text(
-                  'No text selected',
-                  style: TextStyle(color: Colors.white),
-                ),
-              PopupStatus.streaming => controller.text.isEmpty
-                  ? _spinner
-                  : Text(controller.text, style: const TextStyle(color: Colors.white)),
-              PopupStatus.error => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(controller.errorMessage,
-                        style: const TextStyle(color: Colors.redAccent)),
-                    if (widget.onOpenSettings != null)
-                      TextButton(
-                        onPressed: widget.onOpenSettings,
-                        child: const Text('Open Settings'),
-                      ),
-                  ],
-                ),
-            },
-          ),
-        );
-      },
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKey,
+      child: AnimatedBuilder(
+        animation: widget.controller,
+        builder: (context, _) {
+          final controller = widget.controller;
+          return Material(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: switch (controller.status) {
+                PopupStatus.loading => _spinner,
+                PopupStatus.noSelection => const Text(
+                    'No text selected',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                PopupStatus.streaming => controller.text.isEmpty
+                    ? _spinner
+                    : Text(controller.text, style: const TextStyle(color: Colors.white)),
+                PopupStatus.error => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(controller.errorMessage,
+                          style: const TextStyle(color: Colors.redAccent)),
+                      if (widget.onOpenSettings != null)
+                        TextButton(
+                          onPressed: widget.onOpenSettings,
+                          child: const Text('Open Settings'),
+                        ),
+                    ],
+                  ),
+              },
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -968,7 +1013,7 @@ class _PopupScreenState extends State<PopupScreen> {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `flutter test test/ui/popup/popup_screen_test.dart`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -991,7 +1036,8 @@ git commit -m "feat: add popup controller and screen with loading/streaming/erro
 - Consumes: `AppSettings`, `SettingsRepository`, `SecureStorage` (Task 2).
 - Produces:
   - `class ShortcutRecorderField extends StatefulWidget { const ShortcutRecorderField({required String shortcutKey, required List<String> modifiers, required void Function(String key, List<String> modifiers) onChanged}); }`
-  - `class SettingsScreen extends StatefulWidget { const SettingsScreen({required SettingsRepository repository}); }` — has `Key('promptTemplateField')` on the prompt template `TextField`.
+  - `const kCommonWorkersAiModels = <String>[...]` — a short list of common Workers AI text model identifiers, shown in a dropdown alongside the free-text model field.
+  - `class SettingsScreen extends StatefulWidget { const SettingsScreen({required SettingsRepository repository, VoidCallback? onSaved}); }` — has `Key('promptTemplateField')` on the prompt template `TextField`; calls `onSaved` after a successful save so callers (e.g. `main.dart`) can react to settings changes (re-registering the hotkey, etc.) without restarting the app.
 
 - [ ] **Step 1: Write the failing test for the shortcut recorder**
 
@@ -1179,6 +1225,31 @@ void main() {
 
     expect(find.text('Prompt template must contain {{selection}}'), findsOneWidget);
   });
+
+  testWidgets('calls onSaved after a successful save', (tester) async {
+    var savedCount = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: SettingsScreen(repository: repository, onSaved: () => savedCount++),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(savedCount, 1);
+  });
+
+  testWidgets('picking a model from the dropdown fills the model field', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: SettingsScreen(repository: repository)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('modelDropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(kCommonWorkersAiModels.first).last);
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextField, kCommonWorkersAiModels.first), findsOneWidget);
+  });
 }
 ```
 
@@ -1198,10 +1269,18 @@ import '../../app/settings_model.dart';
 import '../../app/settings_repository.dart';
 import 'shortcut_recorder_field.dart';
 
+const kCommonWorkersAiModels = <String>[
+  '@cf/meta/llama-3.1-8b-instruct',
+  '@cf/meta/llama-3.1-70b-instruct',
+  '@cf/mistral/mistral-7b-instruct-v0.1',
+  '@cf/qwen/qwen1.5-14b-chat-awq',
+];
+
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.repository});
+  const SettingsScreen({super.key, required this.repository, this.onSaved});
 
   final SettingsRepository repository;
+  final VoidCallback? onSaved;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -1251,6 +1330,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       shortcutModifiers: _shortcutModifiers,
       launchAtLogin: _launchAtLogin,
     ));
+    widget.onSaved?.call();
   }
 
   @override
@@ -1270,9 +1350,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               obscureText: true,
               decoration: const InputDecoration(labelText: 'API Token'),
             ),
+            DropdownButtonFormField<String>(
+              key: const Key('modelDropdown'),
+              value: kCommonWorkersAiModels.contains(_modelController.text)
+                  ? _modelController.text
+                  : null,
+              hint: const Text('Choose a common model...'),
+              decoration: const InputDecoration(labelText: 'Common models'),
+              items: kCommonWorkersAiModels
+                  .map((model) => DropdownMenuItem(value: model, child: Text(model)))
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => _modelController.text = value);
+              },
+            ),
             TextField(
               controller: _modelController,
-              decoration: const InputDecoration(labelText: 'Model'),
+              decoration: const InputDecoration(labelText: 'Model (or type a custom override)'),
             ),
             TextField(
               key: const Key('promptTemplateField'),
@@ -1312,7 +1406,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 - [ ] **Step 8: Run the settings screen test to verify it passes**
 
 Run: `flutter test test/ui/settings/settings_screen_test.dart`
-Expected: PASS (2 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 9: Commit**
 
@@ -1334,8 +1428,8 @@ git commit -m "feat: add settings screen with shortcut recorder and template val
 **Interfaces:**
 - Consumes: nothing from other tasks.
 - Produces:
-  - `abstract class TrayController { Future<void> setIcon(String iconPath); Future<void> setContextMenu(Menu menu); void addListener(TrayListener listener); }` and `TrayManagerController implements TrayController`.
-  - `class TrayService with TrayListener { TrayService({required TrayController controller, required VoidCallback onSettings, required VoidCallback onQuit}); Future<void> initialize(String iconPath); }`
+  - `abstract class TrayController { Future<void> setIcon(String iconPath); Future<void> setToolTip(String toolTip); Future<void> setContextMenu(Menu menu); void addListener(TrayListener listener); }` and `TrayManagerController implements TrayController`.
+  - `class TrayService with TrayListener { TrayService({required TrayController controller, required VoidCallback onSettings, required VoidCallback onQuit}); Future<void> initialize(String iconPath); Future<void> showHotkeyConflictWarning(); }` — `showHotkeyConflictWarning` sets a distinguishing tray tooltip ("Insight: shortcut conflict — open Settings to rebind") and adds a "⚠ Shortcut conflict" item to the context menu that opens Settings, surfacing the spec's "hotkey registration fails → tray notification, rebind in Settings" requirement.
   - `abstract class AutoStartController { Future<void> enable(); Future<void> disable(); Future<bool> isEnabled(); }` and `LaunchAtStartupController implements AutoStartController`.
   - `class AutoStartSync { AutoStartSync(AutoStartController controller); Future<void> applySetting(bool shouldLaunchAtLogin); }`
 
@@ -1359,7 +1453,7 @@ void main() {
     sync = AutoStartSync(controller);
   });
 
-  test('enables auto-start when requested and currently disabled', async () async {
+  test('enables auto-start when requested and currently disabled', () async {
     when(() => controller.isEnabled()).thenAnswer((_) async => false);
     when(() => controller.enable()).thenAnswer((_) async {});
 
@@ -1369,7 +1463,7 @@ void main() {
     verifyNever(() => controller.disable());
   });
 
-  test('disables auto-start when requested off and currently enabled', async () async {
+  test('disables auto-start when requested off and currently enabled', () async {
     when(() => controller.isEnabled()).thenAnswer((_) async => true);
     when(() => controller.disable()).thenAnswer((_) async {});
 
@@ -1379,7 +1473,7 @@ void main() {
     verifyNever(() => controller.enable());
   });
 
-  test('does nothing when already in the desired state', async () async {
+  test('does nothing when already in the desired state', () async {
     when(() => controller.isEnabled()).thenAnswer((_) async => true);
 
     await sync.applySetting(true);
@@ -1453,7 +1547,7 @@ import 'package:insight/services/tray_service.dart';
 class MockTrayController extends Mock implements TrayController {}
 
 void main() {
-  test('initialize sets the icon and a menu with settings/quit items', async () async {
+  test('initialize sets the icon and a menu with settings/quit items', () async {
     final controller = MockTrayController();
     when(() => controller.setIcon(any())).thenAnswer((_) async {});
     when(() => controller.setContextMenu(any())).thenAnswer((_) async {});
@@ -1466,6 +1560,23 @@ void main() {
     final captured = verify(() => controller.setContextMenu(captureAny())).captured;
     final menu = captured.single as Menu;
     expect(menu.items!.map((item) => item.key), containsAll(['settings', 'quit']));
+  });
+
+  test('showHotkeyConflictWarning sets a tooltip and adds a warning menu item', () async {
+    final controller = MockTrayController();
+    when(() => controller.setIcon(any())).thenAnswer((_) async {});
+    when(() => controller.setToolTip(any())).thenAnswer((_) async {});
+    when(() => controller.setContextMenu(any())).thenAnswer((_) async {});
+    when(() => controller.addListener(any())).thenReturn(null);
+    final service = TrayService(controller: controller, onSettings: () {}, onQuit: () {});
+    await service.initialize('assets/tray_icon.png');
+
+    await service.showHotkeyConflictWarning();
+
+    verify(() => controller.setToolTip(any(that: contains('shortcut conflict')))).called(1);
+    final captured = verify(() => controller.setContextMenu(captureAny())).captured;
+    final menu = captured.last as Menu;
+    expect(menu.items!.map((item) => item.key), contains('hotkeyConflict'));
   });
 
   test('clicking the settings menu item triggers onSettings', () {
@@ -1511,6 +1622,7 @@ import 'package:tray_manager/tray_manager.dart';
 
 abstract class TrayController {
   Future<void> setIcon(String iconPath);
+  Future<void> setToolTip(String toolTip);
   Future<void> setContextMenu(Menu menu);
   void addListener(TrayListener listener);
 }
@@ -1518,6 +1630,9 @@ abstract class TrayController {
 class TrayManagerController implements TrayController {
   @override
   Future<void> setIcon(String iconPath) => trayManager.setIcon(iconPath);
+
+  @override
+  Future<void> setToolTip(String toolTip) => trayManager.setToolTip(toolTip);
 
   @override
   Future<void> setContextMenu(Menu menu) => trayManager.setContextMenu(menu);
@@ -1548,9 +1663,22 @@ class TrayService with TrayListener {
     controller.addListener(this);
   }
 
+  Future<void> showHotkeyConflictWarning() async {
+    await controller.setToolTip(
+      'Insight: shortcut conflict — open Settings to rebind',
+    );
+    await controller.setContextMenu(Menu(items: [
+      MenuItem(key: 'hotkeyConflict', label: '⚠ Shortcut conflict — rebind...'),
+      MenuItem.separator(),
+      MenuItem(key: 'settings', label: 'Settings...'),
+      MenuItem.separator(),
+      MenuItem(key: 'quit', label: 'Quit'),
+    ]));
+  }
+
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
-    if (menuItem.key == 'settings') {
+    if (menuItem.key == 'settings' || menuItem.key == 'hotkeyConflict') {
       _onSettings();
     } else if (menuItem.key == 'quit') {
       _onQuit();
@@ -1562,7 +1690,7 @@ class TrayService with TrayListener {
 - [ ] **Step 8: Run the tray service test to verify it passes**
 
 Run: `flutter test test/services/tray_service_test.dart`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 9: Commit**
 
@@ -1583,7 +1711,7 @@ git commit -m "feat: add tray service and launch-at-login sync"
 
 **Interfaces:**
 - Consumes: `AppSettings`/`SettingsRepository` (Task 2), `ClipboardCaptureService`/`PlatformKeySimulator`/`SystemClipboardAccess` (Task 3), `WorkersAiClient` (Task 4), `ExplanationController`/`PopupScreen` (Task 5), `SettingsScreen` (Task 6), `TrayService`/`TrayManagerController`/`AutoStartSync`/`LaunchAtStartupController` (Task 7).
-- Produces: `abstract class HotkeyController { Future<void> register(HotKey hotKey, {required void Function(HotKey) onKeyDown}); Future<void> unregisterAll(); }`, `HotkeyManagerController implements HotkeyController`, `class HotkeyService { HotkeyService(HotkeyController controller); bool get registrationFailed; Future<void> applyShortcut(AppSettings settings, void Function() onTriggered); }`, and `Rect computePopupFrame(Offset cursor, {Size size})` (used by `main.dart`, kept as a small pure function for testability).
+- Produces: `abstract class HotkeyController { Future<void> register(HotKey hotKey, {required void Function(HotKey) onKeyDown}); Future<void> unregisterAll(); }`, `HotkeyManagerController implements HotkeyController`, `class HotkeyService { HotkeyService(HotkeyController controller); bool get registrationFailed; Future<void> applyShortcut(AppSettings settings, void Function() onTriggered); }`, and `Rect computePopupFrame(Offset cursor, {Size size})` (used by `main.dart`, kept as a small pure function for testability). `main.dart` also: (a) tracks the single open popup window id and closes any existing one before opening a new one, so a second hotkey press never stacks a second popup; (b) registers a `WindowListener` on the popup window that closes it on `onWindowBlur`, and wires `PopupScreen.onDismiss` to close it on Esc; (c) passes `onSaved` to `SettingsScreen` so saving settings re-runs `HotkeyService.applyShortcut` immediately, without an app restart; (d) on hotkey registration failure, calls `TrayService.showHotkeyConflictWarning()` (all platforms) in addition to opening the macOS Accessibility pane (macOS only).
 
 - [ ] **Step 1: Write the failing test for the hotkey service**
 
@@ -1600,7 +1728,7 @@ import 'package:insight/services/hotkey_service.dart';
 class MockHotkeyController extends Mock implements HotkeyController {}
 
 void main() {
-  test('unregisters existing shortcuts and registers the mapped one', async () async {
+  test('unregisters existing shortcuts and registers the mapped one', () async {
     final controller = MockHotkeyController();
     when(() => controller.unregisterAll()).thenAnswer((_) async {});
     when(() => controller.register(any(), onKeyDown: any(named: 'onKeyDown')))
@@ -1635,7 +1763,7 @@ void main() {
     expect(triggered, isTrue);
   });
 
-  test('sets registrationFailed when the controller throws', async () async {
+  test('sets registrationFailed when the controller throws', () async {
     final controller = MockHotkeyController();
     when(() => controller.unregisterAll()).thenAnswer((_) async {});
     when(() => controller.register(any(), onKeyDown: any(named: 'onKeyDown')))
@@ -1792,11 +1920,23 @@ Future<void> main(List<String> args) async {
   await _runMainWindow();
 }
 
+class _PopupBlurListener extends WindowListener {
+  _PopupBlurListener(this.windowId);
+  final int windowId;
+
+  @override
+  void onWindowBlur() {
+    WindowController.fromWindowId(windowId).close();
+  }
+}
+
 void _runPopupWindow(List<String> args) {
   final windowId = int.parse(args[1]);
   final payload = jsonDecode(args[2]) as Map<String, dynamic>;
   final capturedText = payload['capturedText'] as String?;
   final settings = AppSettings.fromJson(payload['settings'] as Map<String, dynamic>);
+
+  windowManager.addListener(_PopupBlurListener(windowId));
 
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -1808,6 +1948,7 @@ void _runPopupWindow(List<String> args) {
         await DesktopMultiWindow.invokeMethod(0, 'openSettings');
         await WindowController.fromWindowId(windowId).close();
       },
+      onDismiss: () => WindowController.fromWindowId(windowId).close(),
     ),
   ));
 }
@@ -1823,7 +1964,7 @@ Future<void> _runMainWindow() async {
   );
 
   final repository = SettingsRepository();
-  final settings = await repository.load();
+  var settings = await repository.load();
 
   await AutoStartSync(LaunchAtStartupController()).applySetting(settings.launchAtLogin);
 
@@ -1832,7 +1973,24 @@ Future<void> _runMainWindow() async {
     clipboard: SystemClipboardAccess(),
   );
 
+  final hotkeyService = HotkeyService(HotkeyManagerController());
+  final trayService = TrayService(
+    controller: TrayManagerController(),
+    onSettings: () => windowManager.show(),
+    onQuit: () => windowManager.close(),
+  );
+  await trayService.initialize('assets/tray_icon.png');
+
+  // Tracks the single open popup window so a second hotkey press replaces
+  // rather than stacks a new one (spec: no multiple simultaneous popups).
+  int? openPopupWindowId;
+
   Future<void> triggerExplain() async {
+    if (openPopupWindowId != null) {
+      await WindowController.fromWindowId(openPopupWindowId!).close();
+      openPopupWindowId = null;
+    }
+
     final capturedText = await clipboardCapture.captureSelection();
     final cursor = await screenRetriever.getCursorScreenPoint();
     final currentSettings = await repository.load();
@@ -1842,31 +2000,37 @@ Future<void> _runMainWindow() async {
       'capturedText': capturedText,
       'settings': currentSettings.toJson(),
     }));
+    openPopupWindowId = window.windowId;
     window
       ..setFrame(frame)
       ..setTitle('Explanation')
       ..show();
   }
 
-  final hotkeyService = HotkeyService(HotkeyManagerController());
-  await hotkeyService.applyShortcut(settings, () {
-    triggerExplain();
-  });
-  if (hotkeyService.registrationFailed && Platform.isMacOS) {
-    await openMacAccessibilitySettings();
+  Future<void> applyHotkey(AppSettings current) async {
+    await hotkeyService.applyShortcut(current, () {
+      triggerExplain();
+    });
+    if (hotkeyService.registrationFailed) {
+      await trayService.showHotkeyConflictWarning();
+      if (Platform.isMacOS) {
+        await openMacAccessibilitySettings();
+      }
+    }
   }
+
+  await applyHotkey(settings);
 
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
-    home: SettingsScreen(repository: repository),
+    home: SettingsScreen(
+      repository: repository,
+      onSaved: () async {
+        settings = await repository.load();
+        await applyHotkey(settings);
+      },
+    ),
   ));
-
-  final trayService = TrayService(
-    controller: TrayManagerController(),
-    onSettings: () => windowManager.show(),
-    onQuit: () => windowManager.close(),
-  );
-  await trayService.initialize('assets/tray_icon.png');
 }
 ```
 
@@ -1939,7 +2103,7 @@ Click somewhere with no text selected and trigger the shortcut. Confirm the popu
 
 - [ ] **Step 6: Verify dismissal**
 
-With a popup open, click outside it. Confirm it closes. Repeat and press Esc instead (note: if Esc-to-close isn't wired via a window-level listener, add a `KeyboardListener`/`Focus` `onKeyEvent` handler in `PopupScreen` that calls `WindowController.fromWindowId` close on `LogicalKeyboardKey.escape` — file a quick follow-up task if this needs code changes, since it wasn't part of the automated tasks above).
+With a popup open, click outside it. Confirm the `_PopupBlurListener`'s `onWindowBlur` closes it. Repeat and press Esc instead — confirm `PopupScreen`'s `Focus.onKeyEvent` handler closes it via `onDismiss`. Also trigger the shortcut twice in quick succession and confirm the first popup is closed rather than leaving two popups open (the `openPopupWindowId` guard in `main.dart`).
 
 - [ ] **Step 7: Verify macOS accessibility permission handling**
 
