@@ -1546,7 +1546,14 @@ import 'package:insight/services/tray_service.dart';
 
 class MockTrayController extends Mock implements TrayController {}
 
+class _FakeTrayListener extends Fake implements TrayListener {}
+
 void main() {
+  setUpAll(() {
+    registerFallbackValue(Menu(items: const []));
+    registerFallbackValue(_FakeTrayListener());
+  });
+
   test('initialize sets the icon and a menu with settings/quit items', () async {
     final controller = MockTrayController();
     when(() => controller.setIcon(any())).thenAnswer((_) async {});
