@@ -1,0 +1,53 @@
+PODS:
+  - desktop_multi_window (0.0.1):
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+  - HotKey (0.2.1)
+  - hotkey_manager_macos (0.0.1):
+    - FlutterMacOS
+    - HotKey
+  - irondash_engine_context (0.0.1):
+    - FlutterMacOS
+  - keypress_simulator_macos (0.0.1):
+    - FlutterMacOS
+  - super_native_extensions (0.0.1):
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - desktop_multi_window (from `Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - hotkey_manager_macos (from `Flutter/ephemeral/.symlinks/plugins/hotkey_manager_macos/macos`)
+  - irondash_engine_context (from `Flutter/ephemeral/.symlinks/plugins/irondash_engine_context/macos`)
+  - keypress_simulator_macos (from `Flutter/ephemeral/.symlinks/plugins/keypress_simulator_macos/macos`)
+  - super_native_extensions (from `Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos`)
+
+SPEC REPOS:
+  trunk:
+    - HotKey
+
+EXTERNAL SOURCES:
+  desktop_multi_window:
+    :path: Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  hotkey_manager_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/hotkey_manager_macos/macos
+  irondash_engine_context:
+    :path: Flutter/ephemeral/.symlinks/plugins/irondash_engine_context/macos
+  keypress_simulator_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/keypress_simulator_macos/macos
+  super_native_extensions:
+    :path: Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos
+
+SPEC CHECKSUMS:
+  desktop_multi_window: 93667594ccc4b88d91a97972fd3b1b89667fa80a
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  HotKey: 400beb7caa29054ea8d864c96f5ba7e5b4852277
+  hotkey_manager_macos: a4317849af96d2430fa89944d3c58977ca089fbe
+  irondash_engine_context: 893c7d96d20ce361d7e996f39d360c4c2f9869ba
+  keypress_simulator_macos: b5c87294b03ab5a2e743873a7dabe1ff5589129d
+  super_native_extensions: c2795d6d9aedf4a79fae25cb6160b71b50549189
+
+PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+
+COCOAPODS: 1.17.0
