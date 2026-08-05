@@ -1735,6 +1735,10 @@ import 'package:insight/services/hotkey_service.dart';
 class MockHotkeyController extends Mock implements HotkeyController {}
 
 void main() {
+  setUpAll(() {
+    registerFallbackValue(HotKey(key: PhysicalKeyboardKey.keyA));
+  });
+
   test('unregisters existing shortcuts and registers the mapped one', () async {
     final controller = MockHotkeyController();
     when(() => controller.unregisterAll()).thenAnswer((_) async {});
