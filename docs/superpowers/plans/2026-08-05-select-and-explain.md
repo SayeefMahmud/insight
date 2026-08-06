@@ -91,6 +91,21 @@ Open `macos/Runner/Info.plist` and add, as a top-level key inside the outer `<di
 <true/>
 ```
 
+- [ ] **Step 3b: Fix `AppDelegate.swift`'s default termination behavior**
+
+Flutter's generated `macos/Runner/AppDelegate.swift` overrides
+`applicationShouldTerminateAfterLastWindowClosed` to return `true`. Since
+this app hides its only window at launch by design (tray-only), that
+default kills the whole process the moment the window hides — discovered
+by actually launching the built app and watching it exit silently right
+after the hide callback. Change it to return `false`:
+
+```swift
+override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+  return false
+}
+```
+
 - [ ] **Step 4: Replace `lib/main.dart` with a minimal placeholder**
 
 ```dart
@@ -1424,6 +1439,20 @@ git commit -m "feat: add settings screen with shortcut recorder and template val
 - Create: `lib/services/auto_start_sync.dart`
 - Test: `test/services/tray_service_test.dart`
 - Test: `test/services/auto_start_sync_test.dart`
+- Create: `assets/tray_icon.png` — `trayManager.setIcon('assets/tray_icon.png')`
+  needs a real file declared under `flutter: assets:` in `pubspec.yaml`; a
+  missing/undeclared asset throws at startup (found by running the built app).
+- **macOS native wiring for `launch_at_startup`**: this package ships no
+  macOS plugin implementation — its README expects the app to back its
+  `launch_at_startup` method channel itself (normally via the third-party
+  `LaunchAtLogin` SPM package). This project instead bumps
+  `MACOSX_DEPLOYMENT_TARGET`/`platform :osx` to `13.0` and implements the
+  channel in `macos/Runner/MainFlutterWindow.swift` directly with Apple's
+  own `SMAppService` (`import ServiceManagement`), avoiding the extra SPM
+  dependency. `main.dart` must also call `launchAtStartup.setup(appName:,
+  appPath:, packageName:)` once before any `enable()`/`disable()`/
+  `isEnabled()` call — omitting it throws `Unsupported operation` (found
+  by running the built app before this was added).
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
@@ -2155,6 +2184,12 @@ git commit -m "feat: wire hotkey capture, popup window, and macOS accessibility 
 **Files:** none (verification only — no code changes).
 
 This task has no automated test: it exercises real OS-level behavior (global hotkeys, clipboard, popup windows, tray icon, login items) that cannot be driven from `flutter test`. Complete every item below before considering the feature done.
+
+**Already confirmed (macOS, this build):** the app launches and stays running
+(process survives — this required the `AppDelegate.swift` and
+`launch_at_startup`/tray-icon-asset fixes noted in Tasks 1 and 7 above,
+found by actually running the built `.app`), and the tray icon is visible
+in the menu bar.
 
 - [ ] **Step 1: Configure real settings**
 
