@@ -87,7 +87,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             DropdownButtonFormField<String>(
               key: const Key('modelDropdown'),
-              value: kCommonWorkersAiModels.contains(_modelController.text)
+              initialValue: kCommonWorkersAiModels.contains(_modelController.text)
                   ? _modelController.text
                   : null,
               hint: const Text('Choose a common model...'),
