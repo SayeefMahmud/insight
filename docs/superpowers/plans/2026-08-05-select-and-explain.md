@@ -1897,6 +1897,7 @@ import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -1923,31 +1924,80 @@ Future<void> openMacAccessibilitySettings() async {
   }
 }
 
+// NOTE ON desktop_multi_window's REAL API (found while implementing this
+// task — the version that resolves for this project's SDK constraint,
+// 0.3.0, differs from older versions some examples online show):
+// there is no `DesktopMultiWindow.createWindow`/`.invokeMethod(id, ...)`
+// static API, windowId is a String (not int), and there is no
+// `setFrame`/`setTitle` on `WindowController`. Instead: every window
+// (primary and popup alike) shares one `main()`; each calls
+// `WindowController.fromCurrentEngine()` to read its own `arguments`
+// (empty string ⇒ this is the primary window). A new window is spawned
+// with `WindowController.create(WindowConfiguration(arguments: ...))`,
+// and each window sizes/positions/shows *itself* via `window_manager`
+// (whose channel is scoped to whichever engine/window called it) once its
+// own `main()` runs. Cross-window calls (popup asking the main window to
+// open Settings; main window closing a previous popup) go through
+// `WindowController.fromWindowId(id).invokeMethod(method)`, handled by a
+// `setWindowMethodHandler` the target window registered on itself.
+
 Future<void> main(List<String> args) async {
-  if (args.isNotEmpty && args.first == 'multi_window') {
-    _runPopupWindow(args);
-    return;
+  WidgetsFlutterBinding.ensureInitialized();
+  await windowManager.ensureInitialized();
+  final windowController = await WindowController.fromCurrentEngine();
+
+  if (windowController.arguments.isEmpty) {
+    await _runMainWindow(windowController);
+  } else {
+    await _runPopupWindow(windowController);
   }
-  await _runMainWindow();
 }
 
+// window_manager's channel targets whichever window this isolate/engine
+// belongs to, so a popup window closes itself directly on blur — no
+// cross-window WindowController call is needed for that.
 class _PopupBlurListener extends WindowListener {
-  _PopupBlurListener(this.windowId);
-  final int windowId;
-
   @override
   void onWindowBlur() {
-    WindowController.fromWindowId(windowId).close();
+    windowManager.close();
   }
 }
 
-void _runPopupWindow(List<String> args) {
-  final windowId = int.parse(args[1]);
-  final payload = jsonDecode(args[2]) as Map<String, dynamic>;
+Future<void> _runPopupWindow(WindowController windowController) async {
+  final payload = jsonDecode(windowController.arguments) as Map<String, dynamic>;
   final capturedText = payload['capturedText'] as String?;
   final settings = AppSettings.fromJson(payload['settings'] as Map<String, dynamic>);
+  final mainWindowId = payload['mainWindowId'] as String;
+  final frameJson = payload['frame'] as Map<String, dynamic>;
+  final frame = Rect.fromLTWH(
+    (frameJson['left'] as num).toDouble(),
+    (frameJson['top'] as num).toDouble(),
+    (frameJson['width'] as num).toDouble(),
+    (frameJson['height'] as num).toDouble(),
+  );
 
-  windowManager.addListener(_PopupBlurListener(windowId));
+  await windowController.setWindowMethodHandler((call) async {
+    if (call.method == 'window_close') {
+      return windowManager.close();
+    }
+    throw MissingPluginException('Not implemented: ${call.method}');
+  });
+
+  windowManager.addListener(_PopupBlurListener());
+
+  await windowManager.waitUntilReadyToShow(
+    WindowOptions(
+      size: frame.size,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      titleBarStyle: TitleBarStyle.hidden,
+    ),
+    () async {
+      await windowManager.setPosition(frame.topLeft);
+      await windowManager.show();
+      await windowManager.focus();
+    },
+  );
 
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -1956,17 +2006,15 @@ void _runPopupWindow(List<String> args) {
       capturedText: capturedText,
       settings: settings,
       onOpenSettings: () async {
-        await DesktopMultiWindow.invokeMethod(0, 'openSettings');
-        await WindowController.fromWindowId(windowId).close();
+        await WindowController.fromWindowId(mainWindowId).invokeMethod('openSettings');
+        await windowManager.close();
       },
-      onDismiss: () => WindowController.fromWindowId(windowId).close(),
+      onDismiss: () => windowManager.close(),
     ),
   ));
 }
 
-Future<void> _runMainWindow() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
+Future<void> _runMainWindow(WindowController windowController) async {
   await windowManager.waitUntilReadyToShow(
     const WindowOptions(skipTaskbar: true, titleBarStyle: TitleBarStyle.hidden),
     () async {
@@ -1987,18 +2035,28 @@ Future<void> _runMainWindow() async {
   final hotkeyService = HotkeyService(HotkeyManagerController());
   final trayService = TrayService(
     controller: TrayManagerController(),
-    onSettings: () => windowManager.show(),
+    onSettings: () async {
+      await windowManager.show();
+      await windowManager.focus();
+    },
     onQuit: () => windowManager.close(),
   );
   await trayService.initialize('assets/tray_icon.png');
 
+  await windowController.setWindowMethodHandler((call) async {
+    if (call.method == 'openSettings') {
+      await windowManager.show();
+      await windowManager.focus();
+    }
+  });
+
   // Tracks the single open popup window so a second hotkey press replaces
   // rather than stacks a new one (spec: no multiple simultaneous popups).
-  int? openPopupWindowId;
+  String? openPopupWindowId;
 
   Future<void> triggerExplain() async {
     if (openPopupWindowId != null) {
-      await WindowController.fromWindowId(openPopupWindowId!).close();
+      await WindowController.fromWindowId(openPopupWindowId!).invokeMethod('window_close');
       openPopupWindowId = null;
     }
 
@@ -2007,15 +2065,21 @@ Future<void> _runMainWindow() async {
     final currentSettings = await repository.load();
     final frame = computePopupFrame(Offset(cursor.dx, cursor.dy));
 
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
-      'capturedText': capturedText,
-      'settings': currentSettings.toJson(),
-    }));
-    openPopupWindowId = window.windowId;
-    window
-      ..setFrame(frame)
-      ..setTitle('Explanation')
-      ..show();
+    final popupController = await WindowController.create(WindowConfiguration(
+      hiddenAtLaunch: true,
+      arguments: jsonEncode({
+        'capturedText': capturedText,
+        'settings': currentSettings.toJson(),
+        'mainWindowId': windowController.windowId,
+        'frame': {
+          'left': frame.left,
+          'top': frame.top,
+          'width': frame.width,
+          'height': frame.height,
+        },
+      }),
+    ));
+    openPopupWindowId = popupController.windowId;
   }
 
   Future<void> applyHotkey(AppSettings current) async {
