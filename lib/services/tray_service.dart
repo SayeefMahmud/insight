@@ -5,6 +5,7 @@ abstract class TrayController {
   Future<void> setIcon(String iconPath);
   Future<void> setToolTip(String toolTip);
   Future<void> setContextMenu(Menu menu);
+  Future<void> popUpContextMenu();
   void addListener(TrayListener listener);
 }
 
@@ -17,6 +18,9 @@ class TrayManagerController implements TrayController {
 
   @override
   Future<void> setContextMenu(Menu menu) => trayManager.setContextMenu(menu);
+
+  @override
+  Future<void> popUpContextMenu() => trayManager.popUpContextMenu();
 
   @override
   void addListener(TrayListener listener) => trayManager.addListener(listener);
@@ -55,6 +59,14 @@ class TrayService with TrayListener {
       MenuItem.separator(),
       MenuItem(key: 'quit', label: 'Quit'),
     ]));
+  }
+
+  // tray_manager doesn't show the context menu automatically on click — the
+  // app must explicitly pop it up in response to the mouse-down event
+  // (confirmed via the plugin's own example app).
+  @override
+  void onTrayIconMouseDown() {
+    controller.popUpContextMenu();
   }
 
   @override

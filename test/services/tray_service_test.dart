@@ -70,4 +70,14 @@ void main() {
 
     expect(quitClicked, isTrue);
   });
+
+  test('mouse-down on the tray icon pops up the context menu', () {
+    final controller = MockTrayController();
+    when(() => controller.popUpContextMenu()).thenAnswer((_) async {});
+    final service = TrayService(controller: controller, onSettings: () {}, onQuit: () {});
+
+    service.onTrayIconMouseDown();
+
+    verify(() => controller.popUpContextMenu()).called(1);
+  });
 }
