@@ -57,7 +57,23 @@ Future<void> main(List<String> args) async {
 class _PopupBlurListener extends WindowListener {
   @override
   void onWindowBlur() {
-    windowManager.close();
+    debugPrint('_PopupBlurListener.onWindowBlur: closing popup');
+    _closePopupWindow();
+  }
+}
+
+// Temporary diagnostic channel — see macos/Runner/MainFlutterWindow.swift.
+// Bypasses window_manager's Cocoa performClose/delegate chain entirely so
+// we can determine whether that chain is where window disposal is failing.
+const _popupWindowChannel = MethodChannel('insight/popup_window');
+
+Future<void> _closePopupWindow() async {
+  debugPrint('_closePopupWindow: invoking hardClose');
+  try {
+    await _popupWindowChannel.invokeMethod('hardClose');
+    debugPrint('_closePopupWindow: hardClose returned');
+  } catch (e) {
+    debugPrint('_closePopupWindow: hardClose threw: $e');
   }
 }
 
@@ -76,7 +92,7 @@ Future<void> _runPopupWindow(WindowController windowController) async {
 
   await windowController.setWindowMethodHandler((call) async {
     if (call.method == 'window_close') {
-      return windowManager.close();
+      return _closePopupWindow();
     }
     throw MissingPluginException('Not implemented: ${call.method}');
   });
@@ -93,6 +109,7 @@ Future<void> _runPopupWindow(WindowController windowController) async {
     () async {
       await windowManager.setPosition(frame.topLeft);
       await windowManager.setVisibleOnAllWorkspaces(true, visibleOnFullScreen: true);
+      await _popupWindowChannel.invokeMethod('raiseAboveFullscreen');
       await windowManager.show();
       await windowManager.focus();
     },
@@ -113,9 +130,12 @@ Future<void> _runPopupWindow(WindowController windowController) async {
       settings: settings,
       onOpenSettings: () async {
         await WindowController.fromWindowId(mainWindowId).invokeMethod('openSettings');
-        await windowManager.close();
+        await _closePopupWindow();
       },
-      onDismiss: () => windowManager.close(),
+      onDismiss: () {
+        debugPrint('PopupScreen.onDismiss: closing popup');
+        _closePopupWindow();
+      },
     ),
   ));
 }
