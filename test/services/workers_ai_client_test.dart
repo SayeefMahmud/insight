@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -16,15 +18,41 @@ void main() {
     final aiClient = WorkersAiClient(httpClient: client);
 
     final chunks = await aiClient
-        .streamExplanation(
+        .streamChat(
           accountId: 'acct',
           apiToken: 'test-token',
           model: '@cf/meta/llama-3.1-8b-instruct',
-          prompt: 'Explain: hi',
+          messages: const [ChatMessage(role: ChatRole.user, content: 'Explain: hi')],
         )
         .toList();
 
     expect(chunks.join(), 'Hello world');
+  });
+
+  test('sends the full conversation as the messages array', () async {
+    late String sentBody;
+    final capturingClient = MockClient((request) async {
+      sentBody = utf8.decode(request.bodyBytes);
+      return http.Response('data: [DONE]\n\n', 200);
+    });
+    final aiClient = WorkersAiClient(httpClient: capturingClient);
+
+    await aiClient
+        .streamChat(
+          accountId: 'acct',
+          apiToken: 'token',
+          model: 'm',
+          messages: const [
+            ChatMessage(role: ChatRole.user, content: 'Explain: hi'),
+            ChatMessage(role: ChatRole.assistant, content: 'It means hello.'),
+            ChatMessage(role: ChatRole.user, content: 'In French?'),
+          ],
+        )
+        .toList();
+
+    expect(sentBody, contains('"role":"user"'));
+    expect(sentBody, contains('"role":"assistant"'));
+    expect(sentBody, contains('In French?'));
   });
 
   test('throws WorkersAiException on a non-200 response', () async {
@@ -33,11 +61,11 @@ void main() {
 
     expect(
       () => aiClient
-          .streamExplanation(
+          .streamChat(
             accountId: 'acct',
             apiToken: 'bad',
             model: 'm',
-            prompt: 'p',
+            messages: const [ChatMessage(role: ChatRole.user, content: 'p')],
           )
           .toList(),
       throwsA(isA<WorkersAiException>()),

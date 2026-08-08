@@ -11,16 +11,27 @@ class WorkersAiException implements Exception {
   String toString() => message;
 }
 
+enum ChatRole { user, assistant }
+
+class ChatMessage {
+  const ChatMessage({required this.role, required this.content});
+
+  final ChatRole role;
+  final String content;
+
+  Map<String, dynamic> toJson() => {'role': role.name, 'content': content};
+}
+
 class WorkersAiClient {
   WorkersAiClient({http.Client? httpClient}) : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
 
-  Stream<String> streamExplanation({
+  Stream<String> streamChat({
     required String accountId,
     required String apiToken,
     required String model,
-    required String prompt,
+    required List<ChatMessage> messages,
   }) async* {
     final uri = Uri.parse(
       'https://api.cloudflare.com/client/v4/accounts/$accountId/ai/run/$model',
@@ -29,9 +40,7 @@ class WorkersAiClient {
       ..headers['Authorization'] = 'Bearer $apiToken'
       ..headers['Content-Type'] = 'application/json'
       ..body = jsonEncode({
-        'messages': [
-          {'role': 'user', 'content': prompt},
-        ],
+        'messages': messages.map((m) => m.toJson()).toList(),
         'stream': true,
       });
 
