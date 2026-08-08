@@ -24,6 +24,10 @@ void main() {
     repository = SettingsRepository(secureStorage: secureStorage);
   });
 
+  Widget buildScreen({VoidCallback? onSaved}) => MaterialApp(
+        home: Scaffold(body: SettingsScreen(repository: repository, onSaved: onSaved)),
+      );
+
   testWidgets('loads existing settings into the form', (tester) async {
     await repository.save(const AppSettings(
       accountId: 'acct-1',
@@ -33,18 +37,18 @@ void main() {
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta', 'shift'],
       launchAtLogin: true,
-      themeMode: 'dark',
+      themeMode: 'light',
     ));
     when(() => secureStorage.read(key: 'apiToken')).thenAnswer((_) async => 'tok');
 
-    await tester.pumpWidget(MaterialApp(home: SettingsScreen(repository: repository)));
+    await tester.pumpWidget(buildScreen());
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(TextField, 'acct-1'), findsOneWidget);
   });
 
   testWidgets('shows a validation error when saving a template missing {{selection}}', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: SettingsScreen(repository: repository)));
+    await tester.pumpWidget(buildScreen());
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('promptTemplateField')), 'no placeholder');
@@ -56,9 +60,7 @@ void main() {
 
   testWidgets('calls onSaved after a successful save', (tester) async {
     var savedCount = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: SettingsScreen(repository: repository, onSaved: () => savedCount++),
-    ));
+    await tester.pumpWidget(buildScreen(onSaved: () => savedCount++));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Save'));
@@ -68,7 +70,7 @@ void main() {
   });
 
   testWidgets('picking a model from the dropdown fills the model field', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: SettingsScreen(repository: repository)));
+    await tester.pumpWidget(buildScreen());
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('modelDropdown')));
@@ -77,5 +79,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(TextField, kCommonWorkersAiModels.first), findsOneWidget);
+  });
+
+  testWidgets('toggling dark mode and saving persists themeMode', (tester) async {
+    await tester.pumpWidget(buildScreen());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('themeToggle')));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final saved = await repository.load();
+    expect(saved.themeMode, isNot(AppSettings.defaultThemeMode));
   });
 }

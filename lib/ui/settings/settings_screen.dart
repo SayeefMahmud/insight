@@ -30,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _shortcutKey = AppSettings.defaultShortcutKey;
   List<String> _shortcutModifiers = AppSettings.defaultShortcutModifiers;
   String? _validationError;
+  bool _isDarkMode = true;
 
   @override
   void initState() {
@@ -47,91 +48,111 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _launchAtLogin = settings.launchAtLogin;
       _shortcutKey = settings.shortcutKey;
       _shortcutModifiers = settings.shortcutModifiers;
+      _isDarkMode = settings.themeMode == 'dark';
     });
   }
 
   Future<void> _save() async {
     if (!_promptTemplateController.text.contains('{{selection}}')) {
-      setState(() => _validationError = 'Prompt template must contain {{selection}}');
+      setState(
+        () => _validationError = 'Prompt template must contain {{selection}}',
+      );
       return;
     }
     setState(() => _validationError = null);
-    await widget.repository.save(AppSettings(
-      accountId: _accountIdController.text,
-      apiToken: _apiTokenController.text,
-      model: _modelController.text,
-      promptTemplate: _promptTemplateController.text,
-      shortcutKey: _shortcutKey,
-      shortcutModifiers: _shortcutModifiers,
-      launchAtLogin: _launchAtLogin,
-    ));
+    await widget.repository.save(
+      AppSettings(
+        accountId: _accountIdController.text,
+        apiToken: _apiTokenController.text,
+        model: _modelController.text,
+        promptTemplate: _promptTemplateController.text,
+        shortcutKey: _shortcutKey,
+        shortcutModifiers: _shortcutModifiers,
+        launchAtLogin: _launchAtLogin,
+        themeMode: _isDarkMode ? 'dark' : 'light',
+      ),
+    );
     widget.onSaved?.call();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: ListView(
-          children: [
-            TextField(
-              controller: _accountIdController,
-              decoration: const InputDecoration(labelText: 'Cloudflare Account ID'),
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ListView(
+        children: [
+          TextField(
+            controller: _accountIdController,
+            decoration: const InputDecoration(
+              labelText: 'Cloudflare Account ID',
             ),
-            TextField(
-              controller: _apiTokenController,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'API Token'),
+          ),
+          TextField(
+            controller: _apiTokenController,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'API Token'),
+          ),
+          DropdownButtonFormField<String>(
+            key: const Key('modelDropdown'),
+            initialValue: kCommonWorkersAiModels.contains(_modelController.text)
+                ? _modelController.text
+                : null,
+            hint: const Text('Choose a common model...'),
+            decoration: const InputDecoration(labelText: 'Common models'),
+            items: kCommonWorkersAiModels
+                .map(
+                  (model) => DropdownMenuItem(value: model, child: Text(model)),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) setState(() => _modelController.text = value);
+            },
+          ),
+          TextField(
+            controller: _modelController,
+            decoration: const InputDecoration(
+              labelText: 'Model (or type a custom override)',
             ),
-            DropdownButtonFormField<String>(
-              key: const Key('modelDropdown'),
-              initialValue: kCommonWorkersAiModels.contains(_modelController.text)
-                  ? _modelController.text
-                  : null,
-              hint: const Text('Choose a common model...'),
-              decoration: const InputDecoration(labelText: 'Common models'),
-              items: kCommonWorkersAiModels
-                  .map((model) => DropdownMenuItem(value: model, child: Text(model)))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _modelController.text = value);
-              },
+          ),
+          TextField(
+            key: const Key('promptTemplateField'),
+            controller: _promptTemplateController,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'System prompt template',
             ),
-            TextField(
-              controller: _modelController,
-              decoration: const InputDecoration(labelText: 'Model (or type a custom override)'),
-            ),
-            TextField(
-              key: const Key('promptTemplateField'),
-              controller: _promptTemplateController,
-              maxLines: 4,
-              decoration: const InputDecoration(labelText: 'System prompt template'),
-            ),
-            if (_validationError != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(_validationError!, style: const TextStyle(color: Colors.red)),
+          ),
+          if (_validationError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _validationError!,
+                style: const TextStyle(color: Colors.red),
               ),
-            const SizedBox(height: 8),
-            ShortcutRecorderField(
-              shortcutKey: _shortcutKey,
-              modifiers: _shortcutModifiers,
-              onChanged: (key, modifiers) => setState(() {
-                _shortcutKey = key;
-                _shortcutModifiers = modifiers;
-              }),
             ),
-            SwitchListTile(
-              title: const Text('Launch at login'),
-              value: _launchAtLogin,
-              onChanged: (value) => setState(() => _launchAtLogin = value),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton(onPressed: _save, child: const Text('Save')),
-          ],
-        ),
+          const SizedBox(height: 8),
+          ShortcutRecorderField(
+            shortcutKey: _shortcutKey,
+            modifiers: _shortcutModifiers,
+            onChanged: (key, modifiers) => setState(() {
+              _shortcutKey = key;
+              _shortcutModifiers = modifiers;
+            }),
+          ),
+          SwitchListTile(
+            title: const Text('Launch at login'),
+            value: _launchAtLogin,
+            onChanged: (value) => setState(() => _launchAtLogin = value),
+          ),
+          SwitchListTile(
+            key: const Key('themeToggle'),
+            title: const Text('Dark mode'),
+            value: _isDarkMode,
+            onChanged: (value) => setState(() => _isDarkMode = value),
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton(onPressed: _save, child: const Text('Save')),
+        ],
       ),
     );
   }
