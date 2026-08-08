@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 
@@ -47,7 +48,7 @@ class HotkeyManagerController implements HotkeyController {
   Future<void> unregisterAll() => hotKeyManager.unregisterAll();
 }
 
-class HotkeyService {
+class HotkeyService extends ChangeNotifier {
   HotkeyService(this._controller);
 
   final HotkeyController _controller;
@@ -67,5 +68,6 @@ class HotkeyService {
     } catch (_) {
       _registrationFailed = true;
     }
+    notifyListeners();
   }
 }

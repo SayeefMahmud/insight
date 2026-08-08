@@ -71,4 +71,31 @@ void main() {
 
     expect(service.registrationFailed, isTrue);
   });
+
+  test('notifies listeners when registrationFailed changes', () async {
+    final controller = MockHotkeyController();
+    when(() => controller.unregisterAll()).thenAnswer((_) async {});
+    when(() => controller.register(any(), onKeyDown: any(named: 'onKeyDown')))
+        .thenAnswer((_) async {});
+    final service = HotkeyService(controller);
+    var notified = false;
+    service.addListener(() => notified = true);
+
+    await service.applyShortcut(
+      const AppSettings(
+        accountId: '',
+        apiToken: '',
+        model: '',
+        promptTemplate: '{{selection}}',
+        shortcutKey: 'keyE',
+        shortcutModifiers: ['meta'],
+        launchAtLogin: false,
+        themeMode: 'dark',
+      ),
+      () {},
+    );
+
+    expect(notified, isTrue);
+    expect(service.registrationFailed, isFalse);
+  });
 }
