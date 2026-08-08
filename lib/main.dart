@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
@@ -24,6 +22,13 @@ import 'ui/popup/popup_screen.dart';
 import 'ui/session/session_controller.dart';
 import 'ui/settings/settings_screen.dart';
 
+// The single channel bridging the main engine and the popup's own engine
+// (hosted in a native NSPanel — see macos/Runner/PopupBridge.swift). Each
+// engine gets its own independent MethodChannel instance under this name;
+// native code relays between them. Main -> popup: 'showExplanation'.
+// Popup -> main: 'openSettings'. Popup -> native only: 'hide'.
+const _popupBridge = MethodChannel('insight/popup_bridge');
+
 Rect computePopupFrame(Offset cursor, {Size size = const Size(420, 520)}) {
   return Rect.fromLTWH(cursor.dx, cursor.dy, size.width, size.height);
 }
@@ -42,89 +47,46 @@ ThemeMode _themeModeOf(AppSettings settings) =>
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
-  final windowController = await WindowController.fromCurrentEngine();
-
-  if (windowController.arguments.isEmpty) {
-    await _runMainWindow(windowController);
-  } else {
-    await _runPopupWindow(windowController);
-  }
+  await _runMainWindow();
 }
 
-// The popup window is created once (lazily, on first hotkey trigger) and
-// reused for the rest of the app's life — desktop_multi_window's engine
-// teardown on window close doesn't actually free the underlying
-// FlutterEngine (confirmed: it never re-triggers "Child window deinit"),
-// so recreating a window per trigger leaks an engine every time. Instead
-// every close path here just hides the window; each new explanation is
-// pushed into the SAME still-running engine via 'window_showExplanation'.
-//
-// window_manager's channel targets whichever window this isolate/engine
-// belongs to, so blur can hide the window directly — no cross-window
-// WindowController call needed for that.
-class _PopupBlurListener extends WindowListener {
-  _PopupBlurListener(this.onBlur);
-
-  final VoidCallback onBlur;
-
-  @override
-  void onWindowBlur() => onBlur();
-}
-
-Future<void> _runPopupWindow(WindowController windowController) async {
-  final payload = jsonDecode(windowController.arguments) as Map<String, dynamic>;
-  final mainWindowId = payload['mainWindowId'] as String;
-  var settings = AppSettings.fromJson(payload['settings'] as Map<String, dynamic>);
+// Entrypoint for the popup's own FlutterEngine, run once by
+// PopupBridge.swift and reused for the app's life (nonactivating NSPanel
+// windows, unlike plain NSWindows, can render above another app's
+// fullscreen Space and receive keystrokes without making Insight the
+// active app — which is what lets the popup show over a fullscreen app,
+// and why it isn't just another desktop_multi_window window).
+@pragma('vm:entry-point')
+Future<void> popupMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
   final controller = SessionController(
     client: WorkersAiClient(),
     historyRepository: HistoryRepository(),
     clipboard: SystemClipboardAccess(),
   );
+  var settings = AppSettings(
+    accountId: '',
+    apiToken: '',
+    model: AppSettings.defaultModel,
+    promptTemplate: AppSettings.defaultPromptTemplate,
+    shortcutKey: AppSettings.defaultShortcutKey,
+    shortcutModifiers: AppSettings.defaultShortcutModifiers,
+    launchAtLogin: false,
+    themeMode: AppSettings.defaultThemeMode,
+  );
   final themeNotifier = ValueNotifier<ThemeMode>(_themeModeOf(settings));
 
-  void hidePopup() {
-    windowManager.hide();
-  }
-
-  await windowController.setWindowMethodHandler((call) async {
-    switch (call.method) {
-      case 'showExplanation':
-        final args = call.arguments as Map<String, dynamic>;
-        final capturedText = args['capturedText'] as String?;
-        settings = AppSettings.fromJson(args['settings'] as Map<String, dynamic>);
-        final frameJson = args['frame'] as Map<String, dynamic>;
-        final frame = Rect.fromLTWH(
-          (frameJson['left'] as num).toDouble(),
-          (frameJson['top'] as num).toDouble(),
-          (frameJson['width'] as num).toDouble(),
-          (frameJson['height'] as num).toDouble(),
-        );
-        themeNotifier.value = _themeModeOf(settings);
-        await windowManager.setSize(frame.size);
-        await windowManager.setPosition(frame.topLeft);
-        await windowManager.show();
-        await windowManager.focus();
-        await controller.start(capturedText: capturedText, settings: settings);
-        return;
-      default:
-        throw MissingPluginException('Not implemented: ${call.method}');
+  _popupBridge.setMethodCallHandler((call) async {
+    if (call.method == 'showExplanation') {
+      final args = call.arguments as Map<dynamic, dynamic>;
+      final capturedText = args['capturedText'] as String?;
+      settings = AppSettings.fromJson(Map<String, dynamic>.from(args['settings'] as Map));
+      themeNotifier.value = _themeModeOf(settings);
+      await controller.start(capturedText: capturedText, settings: settings);
     }
+    return null;
   });
-
-  windowManager.addListener(_PopupBlurListener(hidePopup));
-
-  await windowManager.waitUntilReadyToShow(
-    const WindowOptions(
-      minimumSize: Size(360, 400),
-      alwaysOnTop: true,
-      titleBarStyle: TitleBarStyle.hidden,
-    ),
-    () async {
-      await windowManager.setVisibleOnAllWorkspaces(true, visibleOnFullScreen: true);
-      // Stays hidden until the first 'showExplanation' call arrives.
-    },
-  );
 
   runApp(ValueListenableBuilder<ThemeMode>(
     valueListenable: themeNotifier,
@@ -137,11 +99,8 @@ Future<void> _runPopupWindow(WindowController windowController) async {
         controller: controller,
         capturedText: null,
         settings: settings,
-        onOpenSettings: () async {
-          await WindowController.fromWindowId(mainWindowId).invokeMethod('openSettings');
-          hidePopup();
-        },
-        onDismiss: hidePopup,
+        onOpenSettings: () => _popupBridge.invokeMethod('openSettings'),
+        onDismiss: () => _popupBridge.invokeMethod('hide'),
       ),
     ),
   ));
@@ -156,7 +115,7 @@ class _MainWindowCloseListener extends WindowListener {
   }
 }
 
-Future<void> _runMainWindow(WindowController windowController) async {
+Future<void> _runMainWindow() async {
   await windowManager.setPreventClose(true);
   windowManager.addListener(_MainWindowCloseListener());
 
@@ -202,32 +161,14 @@ Future<void> _runMainWindow(WindowController windowController) async {
   );
   await trayService.initialize('assets/tray_icon.png');
 
-  await windowController.setWindowMethodHandler((call) async {
+  _popupBridge.setMethodCallHandler((call) async {
     if (call.method == 'openSettings') {
       navigation.goToSettings();
       await windowManager.show();
       await windowManager.focus();
     }
+    return null;
   });
-
-  // Created lazily on first trigger, then reused (hidden/shown) for the
-  // rest of the app's life — see the comment on _PopupBlurListener above.
-  WindowController? popupWindowController;
-
-  Future<WindowController> ensurePopupWindow() async {
-    final existing = popupWindowController;
-    if (existing != null) return existing;
-
-    final created = await WindowController.create(WindowConfiguration(
-      hiddenAtLaunch: true,
-      arguments: jsonEncode({
-        'mainWindowId': windowController.windowId,
-        'settings': settings.toJson(),
-      }),
-    ));
-    popupWindowController = created;
-    return created;
-  }
 
   Future<void> triggerExplain() async {
     final capturedText = await clipboardCapture.captureSelection();
@@ -235,8 +176,7 @@ Future<void> _runMainWindow(WindowController windowController) async {
     final currentSettings = await repository.load();
     final frame = computePopupFrame(Offset(cursor.dx, cursor.dy));
 
-    final popupController = await ensurePopupWindow();
-    await popupController.invokeMethod('showExplanation', {
+    await _popupBridge.invokeMethod('showExplanation', {
       'capturedText': capturedText,
       'settings': currentSettings.toJson(),
       'frame': {

@@ -1,7 +1,6 @@
 import Cocoa
 import FlutterMacOS
 import ServiceManagement
-import desktop_multi_window
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
@@ -43,20 +42,18 @@ class MainFlutterWindow: NSWindow {
       }
     }
 
-    RegisterGeneratedPlugins(registry: flutterViewController)
-
-    // Every popup window desktop_multi_window creates gets its own
-    // FlutterViewController/engine — plugins (window_manager, etc.) are
-    // NOT automatically registered on it unless we do so here too.
-    //
-    // That popup window/engine is created once and reused for the app's
-    // lifetime (see lib/main.dart) rather than recreated per hotkey
-    // trigger — desktop_multi_window's window teardown on close doesn't
-    // actually free the underlying FlutterEngine, so recreating it
-    // repeatedly leaked one engine per trigger.
-    FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
-      RegisterGeneratedPlugins(registry: controller)
+    // Bridges this (main) engine to the popup's own engine — see
+    // PopupBridge.swift for why the popup is a hand-rolled NSPanel with
+    // its own FlutterEngine rather than a desktop_multi_window window.
+    let popupBridgeChannel = FlutterMethodChannel(
+      name: "insight/popup_bridge", binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    popupBridgeChannel.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      PopupBridge.shared.handleMainCall(call, result: result)
     }
+    PopupBridge.shared.attachMainChannel(popupBridgeChannel)
+
+    RegisterGeneratedPlugins(registry: flutterViewController)
 
     super.awakeFromNib()
   }
