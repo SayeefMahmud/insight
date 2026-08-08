@@ -80,6 +80,7 @@ Future<void> _runPopupWindow(WindowController windowController) async {
     ),
     () async {
       await windowManager.setPosition(frame.topLeft);
+      await windowManager.setVisibleOnAllWorkspaces(true, visibleOnFullScreen: true);
       await windowManager.show();
       await windowManager.focus();
     },

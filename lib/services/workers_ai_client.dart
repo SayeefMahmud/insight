@@ -61,8 +61,8 @@ class WorkersAiClient {
       if (data.isEmpty) continue;
       if (data == '[DONE]') break;
       final decoded = jsonDecode(data) as Map<String, dynamic>;
-      final chunk = decoded['response'] as String?;
-      if (chunk != null && chunk.isNotEmpty) {
+      final chunk = decoded['response'];
+      if (chunk is String && chunk.isNotEmpty) {
         yield chunk;
       }
     }
