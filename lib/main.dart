@@ -75,7 +75,6 @@ Future<void> _runPopupWindow(WindowController windowController) async {
     WindowOptions(
       size: frame.size,
       minimumSize: const Size(360, 400),
-      skipTaskbar: true,
       alwaysOnTop: true,
       titleBarStyle: TitleBarStyle.hidden,
     ),
@@ -122,7 +121,7 @@ Future<void> _runMainWindow(WindowController windowController) async {
   windowManager.addListener(_MainWindowCloseListener());
 
   await windowManager.waitUntilReadyToShow(
-    const WindowOptions(skipTaskbar: true, titleBarStyle: TitleBarStyle.hidden),
+    const WindowOptions(titleBarStyle: TitleBarStyle.hidden),
     () async {
       await windowManager.hide();
     },
