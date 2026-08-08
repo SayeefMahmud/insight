@@ -13,14 +13,23 @@ class FlutterSecureStorageAdapter implements SecureStorage {
     this._storage = const FlutterSecureStorage(),
   ]);
 
+  // The macOS backend's default `useDataProtectionKeyChain: true` requires
+  // a properly provisioned code-signing identity (Team ID + matching
+  // entitlements) — an ad-hoc signed debug build doesn't have that, which
+  // surfaces as PlatformException -34018 "A required entitlement isn't
+  // present." Falling back to the legacy file-based keychain avoids that
+  // requirement entirely.
+  static const _macOptions = MacOsOptions(usesDataProtectionKeychain: false);
+
   final FlutterSecureStorage _storage;
 
   @override
-  Future<String?> read({required String key}) => _storage.read(key: key);
+  Future<String?> read({required String key}) =>
+      _storage.read(key: key, mOptions: _macOptions);
 
   @override
   Future<void> write({required String key, required String? value}) =>
-      _storage.write(key: key, value: value);
+      _storage.write(key: key, value: value, mOptions: _macOptions);
 }
 
 class SettingsRepository {
