@@ -51,91 +51,98 @@ Future<void> main(List<String> args) async {
   }
 }
 
+// The popup window is created once (lazily, on first hotkey trigger) and
+// reused for the rest of the app's life — desktop_multi_window's engine
+// teardown on window close doesn't actually free the underlying
+// FlutterEngine (confirmed: it never re-triggers "Child window deinit"),
+// so recreating a window per trigger leaks an engine every time. Instead
+// every close path here just hides the window; each new explanation is
+// pushed into the SAME still-running engine via 'window_showExplanation'.
+//
 // window_manager's channel targets whichever window this isolate/engine
-// belongs to, so a popup window closes itself directly on blur — no
-// cross-window WindowController call is needed for that.
+// belongs to, so blur can hide the window directly — no cross-window
+// WindowController call needed for that.
 class _PopupBlurListener extends WindowListener {
+  _PopupBlurListener(this.onBlur);
+
+  final VoidCallback onBlur;
+
   @override
-  void onWindowBlur() {
-    debugPrint('_PopupBlurListener.onWindowBlur: closing popup');
-    _closePopupWindow();
-  }
-}
-
-// Temporary diagnostic channel — see macos/Runner/MainFlutterWindow.swift.
-// Bypasses window_manager's Cocoa performClose/delegate chain entirely so
-// we can determine whether that chain is where window disposal is failing.
-const _popupWindowChannel = MethodChannel('insight/popup_window');
-
-Future<void> _closePopupWindow() async {
-  debugPrint('_closePopupWindow: invoking hardClose');
-  try {
-    await _popupWindowChannel.invokeMethod('hardClose');
-    debugPrint('_closePopupWindow: hardClose returned');
-  } catch (e) {
-    debugPrint('_closePopupWindow: hardClose threw: $e');
-  }
+  void onWindowBlur() => onBlur();
 }
 
 Future<void> _runPopupWindow(WindowController windowController) async {
   final payload = jsonDecode(windowController.arguments) as Map<String, dynamic>;
-  final capturedText = payload['capturedText'] as String?;
-  final settings = AppSettings.fromJson(payload['settings'] as Map<String, dynamic>);
   final mainWindowId = payload['mainWindowId'] as String;
-  final frameJson = payload['frame'] as Map<String, dynamic>;
-  final frame = Rect.fromLTWH(
-    (frameJson['left'] as num).toDouble(),
-    (frameJson['top'] as num).toDouble(),
-    (frameJson['width'] as num).toDouble(),
-    (frameJson['height'] as num).toDouble(),
+  var settings = AppSettings.fromJson(payload['settings'] as Map<String, dynamic>);
+
+  final controller = SessionController(
+    client: WorkersAiClient(),
+    historyRepository: HistoryRepository(),
+    clipboard: SystemClipboardAccess(),
   );
+  final themeNotifier = ValueNotifier<ThemeMode>(_themeModeOf(settings));
+
+  void hidePopup() {
+    windowManager.hide();
+  }
 
   await windowController.setWindowMethodHandler((call) async {
-    if (call.method == 'window_close') {
-      return _closePopupWindow();
+    switch (call.method) {
+      case 'showExplanation':
+        final args = call.arguments as Map<String, dynamic>;
+        final capturedText = args['capturedText'] as String?;
+        settings = AppSettings.fromJson(args['settings'] as Map<String, dynamic>);
+        final frameJson = args['frame'] as Map<String, dynamic>;
+        final frame = Rect.fromLTWH(
+          (frameJson['left'] as num).toDouble(),
+          (frameJson['top'] as num).toDouble(),
+          (frameJson['width'] as num).toDouble(),
+          (frameJson['height'] as num).toDouble(),
+        );
+        themeNotifier.value = _themeModeOf(settings);
+        await windowManager.setSize(frame.size);
+        await windowManager.setPosition(frame.topLeft);
+        await windowManager.show();
+        await windowManager.focus();
+        await controller.start(capturedText: capturedText, settings: settings);
+        return;
+      default:
+        throw MissingPluginException('Not implemented: ${call.method}');
     }
-    throw MissingPluginException('Not implemented: ${call.method}');
   });
 
-  windowManager.addListener(_PopupBlurListener());
+  windowManager.addListener(_PopupBlurListener(hidePopup));
 
   await windowManager.waitUntilReadyToShow(
-    WindowOptions(
-      size: frame.size,
-      minimumSize: const Size(360, 400),
+    const WindowOptions(
+      minimumSize: Size(360, 400),
       alwaysOnTop: true,
       titleBarStyle: TitleBarStyle.hidden,
     ),
     () async {
-      await windowManager.setPosition(frame.topLeft);
       await windowManager.setVisibleOnAllWorkspaces(true, visibleOnFullScreen: true);
-      await _popupWindowChannel.invokeMethod('raiseAboveFullscreen');
-      await windowManager.show();
-      await windowManager.focus();
+      // Stays hidden until the first 'showExplanation' call arrives.
     },
   );
 
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData.light(),
-    darkTheme: ThemeData.dark(),
-    themeMode: _themeModeOf(settings),
-    home: PopupScreen(
-      controller: SessionController(
-        client: WorkersAiClient(),
-        historyRepository: HistoryRepository(),
-        clipboard: SystemClipboardAccess(),
+  runApp(ValueListenableBuilder<ThemeMode>(
+    valueListenable: themeNotifier,
+    builder: (context, mode, _) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.light(),
+      darkTheme: ThemeData.dark(),
+      themeMode: mode,
+      home: PopupScreen(
+        controller: controller,
+        capturedText: null,
+        settings: settings,
+        onOpenSettings: () async {
+          await WindowController.fromWindowId(mainWindowId).invokeMethod('openSettings');
+          hidePopup();
+        },
+        onDismiss: hidePopup,
       ),
-      capturedText: capturedText,
-      settings: settings,
-      onOpenSettings: () async {
-        await WindowController.fromWindowId(mainWindowId).invokeMethod('openSettings');
-        await _closePopupWindow();
-      },
-      onDismiss: () {
-        debugPrint('PopupScreen.onDismiss: closing popup');
-        _closePopupWindow();
-      },
     ),
   ));
 }
@@ -203,36 +210,42 @@ Future<void> _runMainWindow(WindowController windowController) async {
     }
   });
 
-  // Tracks the single open popup window so a second hotkey press replaces
-  // rather than stacks a new one (spec: no multiple simultaneous popups).
-  String? openPopupWindowId;
+  // Created lazily on first trigger, then reused (hidden/shown) for the
+  // rest of the app's life — see the comment on _PopupBlurListener above.
+  WindowController? popupWindowController;
+
+  Future<WindowController> ensurePopupWindow() async {
+    final existing = popupWindowController;
+    if (existing != null) return existing;
+
+    final created = await WindowController.create(WindowConfiguration(
+      hiddenAtLaunch: true,
+      arguments: jsonEncode({
+        'mainWindowId': windowController.windowId,
+        'settings': settings.toJson(),
+      }),
+    ));
+    popupWindowController = created;
+    return created;
+  }
 
   Future<void> triggerExplain() async {
-    if (openPopupWindowId != null) {
-      await WindowController.fromWindowId(openPopupWindowId!).invokeMethod('window_close');
-      openPopupWindowId = null;
-    }
-
     final capturedText = await clipboardCapture.captureSelection();
     final cursor = await screenRetriever.getCursorScreenPoint();
     final currentSettings = await repository.load();
     final frame = computePopupFrame(Offset(cursor.dx, cursor.dy));
 
-    final popupController = await WindowController.create(WindowConfiguration(
-      hiddenAtLaunch: true,
-      arguments: jsonEncode({
-        'capturedText': capturedText,
-        'settings': currentSettings.toJson(),
-        'mainWindowId': windowController.windowId,
-        'frame': {
-          'left': frame.left,
-          'top': frame.top,
-          'width': frame.width,
-          'height': frame.height,
-        },
-      }),
-    ));
-    openPopupWindowId = popupController.windowId;
+    final popupController = await ensurePopupWindow();
+    await popupController.invokeMethod('showExplanation', {
+      'capturedText': capturedText,
+      'settings': currentSettings.toJson(),
+      'frame': {
+        'left': frame.left,
+        'top': frame.top,
+        'width': frame.width,
+        'height': frame.height,
+      },
+    });
   }
 
   Future<void> applyHotkey(AppSettings current) async {

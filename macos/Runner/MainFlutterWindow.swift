@@ -1,5 +1,4 @@
 import Cocoa
-import CoreGraphics
 import FlutterMacOS
 import ServiceManagement
 import desktop_multi_window
@@ -49,36 +48,14 @@ class MainFlutterWindow: NSWindow {
     // Every popup window desktop_multi_window creates gets its own
     // FlutterViewController/engine — plugins (window_manager, etc.) are
     // NOT automatically registered on it unless we do so here too.
+    //
+    // That popup window/engine is created once and reused for the app's
+    // lifetime (see lib/main.dart) rather than recreated per hotkey
+    // trigger — desktop_multi_window's window teardown on close doesn't
+    // actually free the underlying FlutterEngine, so recreating it
+    // repeatedly leaked one engine per trigger.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
       RegisterGeneratedPlugins(registry: controller)
-
-      // window_manager's alwaysOnTop only reaches NSWindow.Level.floating,
-      // which isn't high enough to render over another app's dedicated
-      // fullscreen Space. Raise it further and force-close directly,
-      // bypassing window_manager's Cocoa performClose/delegate chain, as a
-      // diagnostic for whether that chain is where disposal is getting lost.
-      let channel = FlutterMethodChannel(
-        name: "insight/popup_window", binaryMessenger: controller.engine.binaryMessenger
-      )
-      channel.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
-        guard let window = controller.view.window else {
-          NSLog("insight/popup_window: \(call.method) — no window attached")
-          result(nil)
-          return
-        }
-        switch call.method {
-        case "raiseAboveFullscreen":
-          window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
-          result(nil)
-        case "hardClose":
-          NSLog("insight/popup_window: hardClose calling window.close() on \(window)")
-          window.close()
-          NSLog("insight/popup_window: hardClose window.close() returned")
-          result(nil)
-        default:
-          result(FlutterMethodNotImplemented)
-        }
-      }
     }
 
     super.awakeFromNib()
