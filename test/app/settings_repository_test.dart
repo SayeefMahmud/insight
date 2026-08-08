@@ -31,6 +31,7 @@ void main() {
     expect(settings.shortcutKey, AppSettings.defaultShortcutKey);
     expect(settings.shortcutModifiers, AppSettings.defaultShortcutModifiers);
     expect(settings.launchAtLogin, isFalse);
+    expect(settings.themeMode, AppSettings.defaultThemeMode);
   });
 
   test('save persists values that load then returns', () async {
@@ -42,6 +43,7 @@ void main() {
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta', 'shift'],
       launchAtLogin: true,
+      themeMode: 'dark',
     );
     when(() => secureStorage.read(key: 'apiToken'))
         .thenAnswer((_) async => 'secret-token');
@@ -65,6 +67,7 @@ void main() {
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta'],
       launchAtLogin: false,
+      themeMode: 'dark',
     );
 
     expect(() => repository.save(settings), throwsArgumentError);
@@ -79,6 +82,7 @@ void main() {
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta', 'shift'],
       launchAtLogin: true,
+      themeMode: 'dark',
     );
 
     final roundTripped = AppSettings.fromJson(settings.toJson());
@@ -86,5 +90,23 @@ void main() {
     expect(roundTripped.accountId, settings.accountId);
     expect(roundTripped.shortcutModifiers, settings.shortcutModifiers);
     expect(roundTripped.launchAtLogin, settings.launchAtLogin);
+  });
+
+  test('save persists themeMode', () async {
+    const settings = AppSettings(
+      accountId: 'a',
+      apiToken: 't',
+      model: 'm',
+      promptTemplate: '{{selection}}',
+      shortcutKey: 'keyE',
+      shortcutModifiers: ['meta'],
+      launchAtLogin: false,
+      themeMode: 'light',
+    );
+
+    await repository.save(settings);
+    final loaded = await repository.load();
+
+    expect(loaded.themeMode, 'light');
   });
 }

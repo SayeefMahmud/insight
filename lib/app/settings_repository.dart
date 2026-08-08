@@ -44,6 +44,7 @@ class SettingsRepository {
   static const _kShortcutModifiers = 'shortcutModifiers';
   static const _kLaunchAtLogin = 'launchAtLogin';
   static const _kApiToken = 'apiToken';
+  static const _kThemeMode = 'themeMode';
 
   final SecureStorage _secureStorage;
   SharedPreferences? _prefs;
@@ -64,6 +65,7 @@ class SettingsRepository {
       shortcutModifiers: prefs.getStringList(_kShortcutModifiers) ??
           AppSettings.defaultShortcutModifiers,
       launchAtLogin: prefs.getBool(_kLaunchAtLogin) ?? false,
+      themeMode: prefs.getString(_kThemeMode) ?? AppSettings.defaultThemeMode,
     );
   }
 
@@ -78,6 +80,7 @@ class SettingsRepository {
     await prefs.setString(_kShortcutKey, settings.shortcutKey);
     await prefs.setStringList(_kShortcutModifiers, settings.shortcutModifiers);
     await prefs.setBool(_kLaunchAtLogin, settings.launchAtLogin);
+    await prefs.setString(_kThemeMode, settings.themeMode);
     await _secureStorage.write(key: _kApiToken, value: settings.apiToken);
   }
 }

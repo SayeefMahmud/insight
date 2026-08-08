@@ -29,6 +29,7 @@ void main() {
         shortcutKey: 'keyE',
         shortcutModifiers: ['meta', 'shift'],
         launchAtLogin: false,
+        themeMode: 'dark',
       ),
       () => triggered = true,
     );
@@ -63,6 +64,7 @@ void main() {
         shortcutKey: 'keyE',
         shortcutModifiers: ['meta'],
         launchAtLogin: false,
+        themeMode: 'dark',
       ),
       () {},
     );

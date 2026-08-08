@@ -17,6 +17,7 @@ AppSettings _testSettings() => const AppSettings(
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta'],
       launchAtLogin: false,
+      themeMode: 'dark',
     );
 
 void main() {

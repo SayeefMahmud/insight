@@ -33,6 +33,7 @@ void main() {
       shortcutKey: 'keyE',
       shortcutModifiers: ['meta', 'shift'],
       launchAtLogin: true,
+      themeMode: 'dark',
     ));
     when(() => secureStorage.read(key: 'apiToken')).thenAnswer((_) async => 'tok');
 
