@@ -51,6 +51,16 @@ Future<void> main(List<String> args) async {
   }
 }
 
+// window_manager's channel targets whichever window this isolate/engine
+// belongs to, so a popup window closes itself directly on blur — no
+// cross-window WindowController call is needed for that.
+class _PopupBlurListener extends WindowListener {
+  @override
+  void onWindowBlur() {
+    windowManager.close();
+  }
+}
+
 Future<void> _runPopupWindow(WindowController windowController) async {
   final payload = jsonDecode(windowController.arguments) as Map<String, dynamic>;
   final capturedText = payload['capturedText'] as String?;
@@ -70,6 +80,8 @@ Future<void> _runPopupWindow(WindowController windowController) async {
     }
     throw MissingPluginException('Not implemented: ${call.method}');
   });
+
+  windowManager.addListener(_PopupBlurListener());
 
   await windowManager.waitUntilReadyToShow(
     WindowOptions(
