@@ -12,14 +12,19 @@ import 'app/settings_model.dart';
 import 'app/settings_repository.dart';
 import 'services/auto_start_sync.dart';
 import 'services/clipboard_capture_service.dart';
+import 'services/history_repository.dart';
 import 'services/hotkey_service.dart';
 import 'services/tray_service.dart';
 import 'services/workers_ai_client.dart';
-import 'ui/popup/explanation_controller.dart';
+import 'ui/app/app_navigation.dart';
+import 'ui/app/main_app_screen.dart';
+import 'ui/history/history_screen.dart';
+import 'ui/home/home_screen.dart';
 import 'ui/popup/popup_screen.dart';
+import 'ui/session/session_controller.dart';
 import 'ui/settings/settings_screen.dart';
 
-Rect computePopupFrame(Offset cursor, {Size size = const Size(360, 200)}) {
+Rect computePopupFrame(Offset cursor, {Size size = const Size(420, 520)}) {
   return Rect.fromLTWH(cursor.dx, cursor.dy, size.width, size.height);
 }
 
@@ -31,6 +36,9 @@ Future<void> openMacAccessibilitySettings() async {
   }
 }
 
+ThemeMode _themeModeOf(AppSettings settings) =>
+    settings.themeMode == 'light' ? ThemeMode.light : ThemeMode.dark;
+
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
@@ -40,16 +48,6 @@ Future<void> main(List<String> args) async {
     await _runMainWindow(windowController);
   } else {
     await _runPopupWindow(windowController);
-  }
-}
-
-// window_manager's channel targets whichever window this isolate/engine
-// belongs to, so a popup window closes itself directly on blur — no
-// cross-window WindowController call is needed for that.
-class _PopupBlurListener extends WindowListener {
-  @override
-  void onWindowBlur() {
-    windowManager.close();
   }
 }
 
@@ -73,11 +71,10 @@ Future<void> _runPopupWindow(WindowController windowController) async {
     throw MissingPluginException('Not implemented: ${call.method}');
   });
 
-  windowManager.addListener(_PopupBlurListener());
-
   await windowManager.waitUntilReadyToShow(
     WindowOptions(
       size: frame.size,
+      minimumSize: const Size(360, 400),
       skipTaskbar: true,
       alwaysOnTop: true,
       titleBarStyle: TitleBarStyle.hidden,
@@ -91,8 +88,15 @@ Future<void> _runPopupWindow(WindowController windowController) async {
 
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
+    theme: ThemeData.light(),
+    darkTheme: ThemeData.dark(),
+    themeMode: _themeModeOf(settings),
     home: PopupScreen(
-      controller: ExplanationController(client: WorkersAiClient()),
+      controller: SessionController(
+        client: WorkersAiClient(),
+        historyRepository: HistoryRepository(),
+        clipboard: SystemClipboardAccess(),
+      ),
       capturedText: capturedText,
       settings: settings,
       onOpenSettings: () async {
@@ -104,7 +108,19 @@ Future<void> _runPopupWindow(WindowController windowController) async {
   ));
 }
 
+// Closing the main window (native close button) hides it rather than
+// quitting — the app keeps running in the background (tray + Dock icon).
+class _MainWindowCloseListener extends WindowListener {
+  @override
+  void onWindowClose() {
+    windowManager.hide();
+  }
+}
+
 Future<void> _runMainWindow(WindowController windowController) async {
+  await windowManager.setPreventClose(true);
+  windowManager.addListener(_MainWindowCloseListener());
+
   await windowManager.waitUntilReadyToShow(
     const WindowOptions(skipTaskbar: true, titleBarStyle: TitleBarStyle.hidden),
     () async {
@@ -113,7 +129,13 @@ Future<void> _runMainWindow(WindowController windowController) async {
   );
 
   final repository = SettingsRepository();
+  final historyRepository = HistoryRepository();
+  final workersAiClient = WorkersAiClient();
+  final clipboard = SystemClipboardAccess();
+  final navigation = AppNavigation();
   var settings = await repository.load();
+
+  final themeNotifier = ValueNotifier<ThemeMode>(_themeModeOf(settings));
 
   // launch_at_startup falls back to a no-op implementation that throws on
   // every call until setup() has been run once.
@@ -133,15 +155,17 @@ Future<void> _runMainWindow(WindowController windowController) async {
   final trayService = TrayService(
     controller: TrayManagerController(),
     onSettings: () async {
+      navigation.goToSettings();
       await windowManager.show();
       await windowManager.focus();
     },
-    onQuit: () => windowManager.close(),
+    onQuit: () => exit(0),
   );
   await trayService.initialize('assets/tray_icon.png');
 
   await windowController.setWindowMethodHandler((call) async {
     if (call.method == 'openSettings') {
+      navigation.goToSettings();
       await windowManager.show();
       await windowManager.focus();
     }
@@ -193,14 +217,37 @@ Future<void> _runMainWindow(WindowController windowController) async {
 
   await applyHotkey(settings);
 
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: SettingsScreen(
-      repository: repository,
-      onSaved: () async {
-        settings = await repository.load();
-        await applyHotkey(settings);
-      },
+  runApp(ValueListenableBuilder<ThemeMode>(
+    valueListenable: themeNotifier,
+    builder: (context, mode, _) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.light(),
+      darkTheme: ThemeData.dark(),
+      themeMode: mode,
+      home: MainAppScreen(
+        navigation: navigation,
+        homeScreen: HomeScreen(
+          settingsRepository: repository,
+          historyRepository: historyRepository,
+          hotkeyService: hotkeyService,
+          navigation: navigation,
+        ),
+        historyScreen: HistoryScreen(
+          historyRepository: historyRepository,
+          client: workersAiClient,
+          clipboard: clipboard,
+          settingsRepository: repository,
+          navigation: navigation,
+        ),
+        settingsScreen: SettingsScreen(
+          repository: repository,
+          onSaved: () async {
+            settings = await repository.load();
+            themeNotifier.value = _themeModeOf(settings);
+            await applyHotkey(settings);
+          },
+        ),
+      ),
     ),
   ));
 }
