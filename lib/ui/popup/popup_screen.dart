@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/settings_model.dart';
-import 'explanation_controller.dart';
+import '../session/conversation_view.dart';
+import '../session/session_controller.dart';
 
 class PopupScreen extends StatefulWidget {
   const PopupScreen({
@@ -14,7 +15,7 @@ class PopupScreen extends StatefulWidget {
     this.onDismiss,
   });
 
-  final ExplanationController controller;
+  final SessionController controller;
   final String? capturedText;
   final AppSettings settings;
   final VoidCallback? onOpenSettings;
@@ -39,12 +40,6 @@ class _PopupScreenState extends State<PopupScreen> {
     super.dispose();
   }
 
-  static const _spinner = SizedBox(
-    height: 24,
-    width: 24,
-    child: CircularProgressIndicator(strokeWidth: 2),
-  );
-
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
       widget.onDismiss?.call();
@@ -59,41 +54,14 @@ class _PopupScreenState extends State<PopupScreen> {
       focusNode: _focusNode,
       autofocus: true,
       onKeyEvent: _handleKey,
-      child: AnimatedBuilder(
-        animation: widget.controller,
-        builder: (context, _) {
-          final controller = widget.controller;
-          return Material(
-            color: Colors.black87,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: switch (controller.status) {
-                PopupStatus.loading => _spinner,
-                PopupStatus.noSelection => const Text(
-                    'No text selected',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                PopupStatus.streaming => controller.text.isEmpty
-                    ? _spinner
-                    : Text(controller.text, style: const TextStyle(color: Colors.white)),
-                PopupStatus.error => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(controller.errorMessage,
-                          style: const TextStyle(color: Colors.redAccent)),
-                      if (widget.onOpenSettings != null)
-                        TextButton(
-                          onPressed: widget.onOpenSettings,
-                          child: const Text('Open Settings'),
-                        ),
-                    ],
-                  ),
-              },
-            ),
-          );
-        },
+      child: Material(
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: ConversationView(
+          controller: widget.controller,
+          onOpenSettings: widget.onOpenSettings,
+          onClose: widget.onDismiss,
+        ),
       ),
     );
   }
