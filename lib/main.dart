@@ -33,6 +33,40 @@ Rect computePopupFrame(Offset cursor, {Size size = const Size(420, 520)}) {
   return Rect.fromLTWH(cursor.dx, cursor.dy, size.width, size.height);
 }
 
+/// Shifts [frame] so it stays entirely within [screen], preferring to keep
+/// its size intact (moving it up/left) over letting any edge get cropped.
+Rect clampFrameToScreen(Rect frame, Rect screen) {
+  var left = frame.left;
+  var top = frame.top;
+
+  if (left + frame.width > screen.right) {
+    left = screen.right - frame.width;
+  }
+  if (top + frame.height > screen.bottom) {
+    top = screen.bottom - frame.height;
+  }
+  if (left < screen.left) left = screen.left;
+  if (top < screen.top) top = screen.top;
+
+  return Rect.fromLTWH(left, top, frame.width, frame.height);
+}
+
+Rect _visibleBounds(Display display) {
+  final position = display.visiblePosition ?? Offset.zero;
+  final size = display.visibleSize ?? display.size;
+  return Rect.fromLTWH(position.dx, position.dy, size.width, size.height);
+}
+
+Future<Rect> _screenBoundsForCursor(Offset cursor) async {
+  final displays = await screenRetriever.getAllDisplays();
+  for (final display in displays) {
+    if (_visibleBounds(display).contains(cursor)) {
+      return _visibleBounds(display);
+    }
+  }
+  return _visibleBounds(await screenRetriever.getPrimaryDisplay());
+}
+
 Future<void> openMacAccessibilitySettings() async {
   if (Platform.isMacOS) {
     await Process.run('open', [
@@ -174,7 +208,9 @@ Future<void> _runMainWindow() async {
     final capturedText = await clipboardCapture.captureSelection();
     final cursor = await screenRetriever.getCursorScreenPoint();
     final currentSettings = await repository.load();
-    final frame = computePopupFrame(Offset(cursor.dx, cursor.dy));
+    final cursorOffset = Offset(cursor.dx, cursor.dy);
+    final screenBounds = await _screenBoundsForCursor(cursorOffset);
+    final frame = clampFrameToScreen(computePopupFrame(cursorOffset), screenBounds);
 
     await _popupBridge.invokeMethod('showExplanation', {
       'capturedText': capturedText,

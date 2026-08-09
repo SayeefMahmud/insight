@@ -82,6 +82,41 @@ void main() {
     expect(find.text('Bonjour'), findsOneWidget);
   });
 
+  testWidgets('auto-scrolls to the bottom when a new turn overflows the viewport', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 300));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    when(() => client.streamChat(
+          accountId: any(named: 'accountId'),
+          apiToken: any(named: 'apiToken'),
+          model: any(named: 'model'),
+          messages: any(named: 'messages'),
+        )).thenAnswer(
+            (_) => Stream.fromIterable([List.generate(20, (_) => 'first answer').join(' ')]));
+    await controller.start(capturedText: 'some text', settings: const _NoopSettings());
+
+    await tester.pumpWidget(MaterialApp(
+      home: ConversationView(controller: controller),
+    ));
+    await tester.pumpAndSettle();
+
+    when(() => client.streamChat(
+          accountId: any(named: 'accountId'),
+          apiToken: any(named: 'apiToken'),
+          model: any(named: 'model'),
+          messages: any(named: 'messages'),
+        )).thenAnswer(
+            (_) => Stream.fromIterable([List.generate(20, (_) => 'second answer').join(' ')]));
+
+    await tester.enterText(find.byKey(const Key('followUpField')), 'another question');
+    await tester.tap(find.byKey(const Key('sendButton')));
+    await tester.pumpAndSettle();
+
+    final listView = tester.widget<ListView>(find.byKey(const Key('conversationScrollView')));
+    final scrollController = listView.controller!;
+    expect(scrollController.offset, scrollController.position.maxScrollExtent);
+  });
+
   testWidgets('regenerate button re-runs the last turn', (tester) async {
     when(() => client.streamChat(
           accountId: any(named: 'accountId'),

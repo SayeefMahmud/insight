@@ -21,11 +21,18 @@ class ConversationView extends StatefulWidget {
 
 class _ConversationViewState extends State<ConversationView> {
   final _inputController = TextEditingController();
+  final _scrollController = ScrollController();
 
   @override
   void dispose() {
     _inputController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
   }
 
   void _submit() {
@@ -72,6 +79,7 @@ class _ConversationViewState extends State<ConversationView> {
   Widget _buildSession(SessionController controller, {required bool showError}) {
     final session = controller.session!;
     final hasAssistantTurn = session.turns.any((t) => t.role == TurnRole.assistant);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -113,6 +121,8 @@ class _ConversationViewState extends State<ConversationView> {
         ),
         Expanded(
           child: ListView(
+            key: const Key('conversationScrollView'),
+            controller: _scrollController,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
               for (final turn in session.turns)
