@@ -14,11 +14,13 @@ void main() {
     keySimulator = MockKeySimulator();
     clipboard = MockClipboardAccess();
     when(() => keySimulator.simulateCopy()).thenAnswer((_) async {});
+    when(() => keySimulator.hasAccessibilityPermission()).thenAnswer((_) async => true);
     when(() => clipboard.writeText(any())).thenAnswer((_) async {});
     service = ClipboardCaptureService(
       keySimulator: keySimulator,
       clipboard: clipboard,
       copyDelay: Duration.zero,
+      maxWait: Duration.zero,
     );
   });
 
@@ -55,5 +57,38 @@ void main() {
     final result = await service.captureSelection();
 
     expect(result, isNull);
+  });
+
+  test('retries within maxWait when the target app is slow to update the clipboard', () async {
+    final slowService = ClipboardCaptureService(
+      keySimulator: keySimulator,
+      clipboard: clipboard,
+      copyDelay: const Duration(milliseconds: 5),
+      maxWait: const Duration(milliseconds: 200),
+    );
+    var readCallCount = 0;
+    when(() => clipboard.readText()).thenAnswer((_) async {
+      readCallCount++;
+      // 1st call: original clipboard. 2nd call: app hasn't copied yet
+      // (still equal to original). 3rd call: the copy has landed.
+      if (readCallCount <= 2) return 'old value';
+      return 'selected text';
+    });
+
+    final result = await slowService.captureSelection();
+
+    expect(result, 'selected text');
+    expect(readCallCount, 3);
+  });
+
+  test('still attempts the copy when accessibility permission is missing', () async {
+    when(() => keySimulator.hasAccessibilityPermission()).thenAnswer((_) async => false);
+    when(() => clipboard.readText()).thenAnswer((_) async => 'same value');
+
+    final result = await service.captureSelection();
+
+    expect(result, isNull);
+    verify(() => keySimulator.hasAccessibilityPermission()).called(1);
+    verify(() => keySimulator.simulateCopy()).called(1);
   });
 }

@@ -1,11 +1,18 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:keypress_simulator/keypress_simulator.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
 abstract class KeySimulator {
   Future<void> simulateCopy();
+
+  // macOS revokes Accessibility permission for an ad-hoc-signed app
+  // whenever its code signature changes — i.e. on every rebuild during
+  // development — which makes simulateCopy() silently no-op. Surfacing
+  // this distinguishes "permission is missing" from "nothing selected".
+  Future<bool> hasAccessibilityPermission();
 }
 
 class PlatformKeySimulator implements KeySimulator {
@@ -17,6 +24,12 @@ class PlatformKeySimulator implements KeySimulator {
         .simulateKeyDown(PhysicalKeyboardKey.keyC, [modifier]);
     await KeyPressSimulator.instance
         .simulateKeyUp(PhysicalKeyboardKey.keyC, [modifier]);
+  }
+
+  @override
+  Future<bool> hasAccessibilityPermission() {
+    if (!Platform.isMacOS) return Future.value(true);
+    return KeyPressSimulator.instance.isAccessAllowed();
   }
 }
 
@@ -48,23 +61,42 @@ class ClipboardCaptureService {
   ClipboardCaptureService({
     required this.keySimulator,
     required this.clipboard,
-    this.copyDelay = const Duration(milliseconds: 100),
+    this.copyDelay = const Duration(milliseconds: 50),
+    this.maxWait = const Duration(milliseconds: 500),
   });
 
   final KeySimulator keySimulator;
   final ClipboardAccess clipboard;
   final Duration copyDelay;
 
+  // The target app can take longer than a single fixed delay to update the
+  // system clipboard after a synthetic copy — especially non-native apps
+  // under load — so this polls for up to maxWait instead of checking once.
+  final Duration maxWait;
+
   Future<String?> captureSelection() async {
+    if (!await keySimulator.hasAccessibilityPermission()) {
+      debugPrint(
+        'ClipboardCaptureService: Accessibility permission not granted — '
+        'the synthetic copy will likely be ignored by the OS.',
+      );
+    }
+
     final original = await clipboard.readText();
     await keySimulator.simulateCopy();
-    await Future.delayed(copyDelay);
-    final captured = await clipboard.readText();
+
+    String? captured;
+    final stopwatch = Stopwatch()..start();
+    do {
+      await Future.delayed(copyDelay);
+      captured = await clipboard.readText();
+    } while (_isUnchanged(captured, original) && stopwatch.elapsed < maxWait);
+
     await clipboard.writeText(original);
 
-    if (captured == null || captured.isEmpty || captured == original) {
-      return null;
-    }
-    return captured;
+    return _isUnchanged(captured, original) ? null : captured;
   }
+
+  bool _isUnchanged(String? captured, String? original) =>
+      captured == null || captured.isEmpty || captured == original;
 }
